@@ -1,0 +1,5 @@
+function ForesightClear() {
+  var spreadsheet = SpreadsheetApp.getActive();
+  spreadsheet.getRangeList(['A10:J365']).activate()
+  .clear({contentsOnly: true, skipFilteredRows: false});
+};

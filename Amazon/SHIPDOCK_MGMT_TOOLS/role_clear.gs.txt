@@ -1,0 +1,5 @@
+function role_clear() {
+  var spreadsheet = SpreadsheetApp.getActive();
+  spreadsheet.getRangeList(['A2:A1000']).activate()
+  .clear({contentsOnly: true, skipFilteredRows: false});
+};

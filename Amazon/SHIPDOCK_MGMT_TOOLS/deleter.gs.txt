@@ -1,0 +1,15 @@
+function deleter() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  // 👇 Add the names of the sheets you want to keep
+  const sheetsToKeep = ['FULL ROSTER','PERMS', 'SCHEDULED', 'SD_FILTER', 'SD_RATE', 'ROLE_MATRIX', 'ROLES', 'STAFFING_TRACK', 'PA_EXPECTATIONS', 'RoundTable', 'CART_STRAP_AUDIT', 'DD', 'INPUT', 'RTB_AUTOANALYSIS_BUILD2.0', 'COMMENT_LOG', 'TEMPLATE_RTBAnalysis - 08.27.25'];
+
+  const allSheets = ss.getSheets();
+
+  allSheets.forEach(sheet => {
+    const name = sheet.getSheetName();
+    if (!sheetsToKeep.includes(name)) {
+      ss.deleteSheet(sheet);
+    }
+  });
+}

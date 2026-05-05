@@ -1,0 +1,37 @@
+function archiveRTBData() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const rtbSheet = ss.getSheetByName("RTB_AUTOANALYSIS_BUILD3.0");
+  
+  // Process path from A1 dropdown
+  const processPath = rtbSheet.getRange("A1").getValue();
+  const exportDate = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+
+  // N:S = columns 14:19
+  const lastRow = rtbSheet.getLastRow();
+  const data = rtbSheet.getRange(2, 14, lastRow - 1, 6).getValues(); 
+  // starts row 2 to skip header, 6 cols = N,O,P,Q,R,S
+
+  // Clean empty rows
+  const cleanRows = data.filter(row => 
+    row[0] !== "" && row[0] !== null // LOGIN column not empty
+  );
+
+  // Get or create ARCHIVE tab
+  let archiveSheet = ss.getSheetByName("ARCHIVE");
+  if (!archiveSheet) {
+    archiveSheet = ss.insertSheet("ARCHIVE");
+    archiveSheet.appendRow([
+      "LOGIN", "SHIFT", "LC", "HRS", "UNITS", "UPH", 
+      "EXPORT_DATE", "PROCESS_PATH"
+    ]);
+  }
+
+  // Append stamped rows
+  cleanRows.forEach(row => {
+    archiveSheet.appendRow([...row, exportDate, processPath]);
+  });
+
+  SpreadsheetApp.getUi().alert(
+    `Archived ${cleanRows.length} rows — ${processPath} | ${exportDate}`
+  );
+}

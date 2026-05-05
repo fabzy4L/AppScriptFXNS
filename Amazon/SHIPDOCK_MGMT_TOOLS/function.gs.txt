@@ -1,0 +1,12 @@
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('FXNs')
+    .addItem('Scheduled Clear', 'scheduled_clear')
+    .addItem('Staffing Clear', 'staffing_Clear')
+    .addItem('Role Clear', 'role_clear')
+    .addItem('Foresight Clear', 'ForesightClear')
+    .addItem('Tab Names', 'exportTabNames')
+    .addItem('Deleter', 'deleter')
+    .addItem('Format', 'formatFormatSheet')
+    .addToUi();
+}

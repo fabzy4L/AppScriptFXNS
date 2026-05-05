@@ -1,0 +1,19 @@
+function openAll() {
+  const html = HtmlService.createHtmlOutput(`
+    <script>
+      setTimeout(function() {
+        window.open('https://autoflow-cascade-na.amazon.com/SAV4/shiftplan/', '_blank');
+      }, 0);
+      setTimeout(function() {
+        window.open('https://sspot.iad.corp.amazon.com/', '_blank');
+      }, 500);
+      setTimeout(function() {
+        window.open('https://YOUR_THIRD_URL_HERE', '_blank');
+      }, 1000);
+      setTimeout(function() {
+        google.script.host.close();
+      }, 1500);
+    </script>
+  `).setWidth(100).setHeight(50);
+  SpreadsheetApp.getUi().showModalDialog(html, 'Opening tabs...');
+}

@@ -1,0 +1,4 @@
+function hourlyclear() {
+  const ss = SpreadsheetApp.getActive();
+  ss.getRangeList(['C3:D15','G3:I15','P2:AJ15' ]).clearContent();
+}

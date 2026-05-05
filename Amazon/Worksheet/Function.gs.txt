@@ -1,0 +1,14 @@
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('FXNs')
+    .addItem('Deleter', 'deleter')
+    .addItem('Update Form', 'createOrUpdateForm')
+    .addItem('Hourly Clear', 'hourlyclear')
+    .addItem('Snapshot', 'archiveToExternalSheet')
+    .addItem('Tab Names', 'exportTabNames')
+    .addItem('Recirc Chutes', 'splitColumnG')
+    .addItem('Isolate Data', 'runIsolateData')
+    .addItem('Count Chutes', 'countChutesPerSortKey')
+    .addItem('RTB Cost', 'deployHoursComment')
+    .addToUi();
+}

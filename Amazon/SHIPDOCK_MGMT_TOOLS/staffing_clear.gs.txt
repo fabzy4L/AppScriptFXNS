@@ -1,0 +1,5 @@
+  function staffing_Clear() {
+    var spreadsheet = SpreadsheetApp.getActive();
+    spreadsheet.getRangeList(['J2:J150']).activate()
+    .clear({contentsOnly: true, skipFilteredRows: false});
+  };

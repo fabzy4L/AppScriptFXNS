@@ -1,0 +1,331 @@
+/***** RTB — Button-driven deploy with step-by-step toasts *****/
+
+const INPUT_SHEET_NAME    = 'INPUT';
+const OUTPUT_SHEET_NAME   = 'RTB_AUTOANALYSIS_BUILD3.0';
+const OUTPUT_CELL         = 'E3:K9';
+const THRESHOLD_RANGE     = 'D1';     // UPH threshold (number in D1)
+const FUNCTION_RANGE      = 'A1:B1';  // function/area name (can span A1:B1)
+const INCLUDE_HEADER_LINE = false;
+
+// Quick sanity check function to verify your button wiring.
+// Assign your button to rtb_ping first; it should write "PING OK" to E3:K9 of OUTPUT sheet.
+function rtb_ping() {
+  const out = SpreadsheetApp.getActive().getSheetByName(OUTPUT_SHEET_NAME);
+  if (!out) throw new Error(`Sheet "${OUTPUT_SHEET_NAME}" not found`);
+  out.getRange('E3:K9').setValue('PING OK');
+  SpreadsheetApp.getActive().toast('PING OK wrote to E3:K9', 'RTB', 3);
+}
+
+function deploy() {
+  const ss = SpreadsheetApp.getActive(); 
+  try {
+    toast_('Starting deploy…');
+
+    const input = mustGetSheet_(INPUT_SHEET_NAME);
+    const out   = mustGetSheet_(OUTPUT_SHEET_NAME);
+
+    // 1) Delete rows where UPH is blank or "-"
+    const droppedUPH = dropRowsWithBlankUPH_(input);
+    toast_(`Cleaned INPUT: removed ${droppedUPH} row(s) with blank/“-” UPH`);
+
+    // 1a) Delete rows where PAID HOURS equals 0
+    const droppedZeroHrs = dropRowsWithZeroPaidHours_(input);
+    toast_(`Cleaned INPUT: removed ${droppedZeroHrs} row(s) with 0 paid hours`);
+
+    // 2) Read table
+    const data = input.getDataRange().getValues();
+    if (!data || data.length < 2) throw new Error('No data after cleaning.');
+    const header = data[0].map(x => String(x ?? '').trim());
+    const rows = data.slice(1).map(r => {
+      const o = {};
+      header.forEach((h,i) => o[h] = r[i]);
+      return o;
+    });
+
+    // 3) Clean dataset
+    const cleaned = cleanDataset_(rows);
+    if (!cleaned.length) throw new Error('No valid rows after cleaning (need numeric Hours/Units/UPH > 0).');
+    toast_(`Rows after cleaning: ${cleaned.length}`);
+
+    // 4) Validate inputs and compute metrics
+    const { thr, fn } = assertInputs_(); // toasts what was read
+    const metrics = computeMetrics_(cleaned, thr);
+    toast_(`Totals: ${metrics.total_units} units / ${metrics.total_hours} hours (UPH ${metrics.weighted_uph})`);
+
+    // 5) Build comment
+    const { headerDate, longDate } = parseDateFromNameOrToday_(OUTPUT_SHEET_NAME);
+    let comment = buildCommentOnly_(longDate, metrics, fn);
+    if (INCLUDE_HEADER_LINE) comment = `${headerDate} ${fn}\n\n${comment}`;
+
+    // 6) Write to output cell
+    out.getRange(OUTPUT_CELL).setValue(comment).setWrap(true);
+    toast_(`Comment written to ${OUTPUT_SHEET_NAME}!${OUTPUT_CELL}`, 4);
+
+  } catch (err) {
+    const msg = (err && err.message) ? err.message : String(err);
+    SpreadsheetApp.getActive().toast(`ERROR: ${msg}`, 'RTB', 6);
+  }
+}
+
+/* -------------------------- Helpers -------------------------- */
+
+// Read threshold from OUTPUT!D1. Uses display value to tolerate formatting.
+function readUphThreshold_() {
+  const sh = mustGetSheet_(OUTPUT_SHEET_NAME);
+  const raw = sh.getRange(THRESHOLD_RANGE).getDisplayValue();
+  const n = toNum_(raw);
+  if (!isFinite(n) || n <= 0) {
+    throw new Error(`Invalid UPH threshold in ${OUTPUT_SHEET_NAME}!${THRESHOLD_RANGE} → "${raw}"`);
+  }
+  return n;
+}
+
+// Read function name from OUTPUT!A1:B1. Flattens, trims, collapses whitespace.
+function readFunctionName_() {
+  const sh = mustGetSheet_(OUTPUT_SHEET_NAME);
+  const vals = sh.getRange(FUNCTION_RANGE).getDisplayValues()
+    .flat()
+    .map(v => String(v || '').trim())
+    .filter(v => v.length > 0);
+  const name = vals.join(' ').replace(/\s+/g,' ').trim();
+  if (!name) throw new Error(`Function name missing or blank in ${OUTPUT_SHEET_NAME}!${FUNCTION_RANGE}`);
+  return name;
+}
+
+// Quick assertion + toast for visibility
+function assertInputs_() {
+  const thr = readUphThreshold_();
+  const fn  = readFunctionName_();
+  toast_(`Input check OK → Threshold: ${thr} | Function: "${fn}"`, 5);
+  return { thr, fn };
+}
+
+function toast_(msg, seconds) {
+  SpreadsheetApp.getActive().toast(msg, 'RTB', seconds || 3);
+}
+
+function mustGetSheet_(name) {
+  const sh = SpreadsheetApp.getActive().getSheetByName(name);
+  if (!sh) throw new Error(`Sheet "${name}" not found`);
+  return sh;
+}
+
+// Deletes rows with UPH blank or "-" (case-insensitive header match). Returns # rows deleted.
+function dropRowsWithBlankUPH_(sheet) {
+  const range = sheet.getDataRange();
+  const values = range.getValues();
+  if (!values || values.length < 2) return 0;
+
+  const header = values[0].map(h => String(h ?? '').trim());
+  const uphIdx = findHeaderIndex_(header, ['UPH', 'Units per Hour', 'Units/Hour']);
+  if (uphIdx === -1) throw new Error('UPH column not found (header match is case-insensitive).');
+
+  let deleted = 0;
+  for (let r = values.length - 1; r >= 1; r--) {
+    const val = values[r][uphIdx];
+    const s = val == null ? '' : String(val).trim();
+    if (s === '' || s === '-') {
+      sheet.deleteRow(r + 1); // 1-based
+      deleted++;
+    }
+  }
+  return deleted;
+}
+
+// Deletes rows where Paid Hours == 0. Returns # rows deleted.
+function dropRowsWithZeroPaidHours_(sheet) {
+  const range = sheet.getDataRange();
+  const values = range.getValues();
+  if (!values || values.length < 2) return 0;
+
+  const header = values[0].map(h => String(h ?? '').trim());
+  const hourIdx = findHeaderIndex_(header, [
+    'PAID HOURS-TOTAL(FUNCTION,EMPLOYEE)',
+    'PAID HOURS - TOTAL(FUNCTION,EMPLOYEE)',
+    'PAID HOURS TOTAL(FUNCTION,EMPLOYEE)',
+    'PAID HOURS-TOTAL',
+    'PAID HOURS',
+    'HOURS'
+  ]);
+  if (hourIdx === -1) throw new Error('Paid Hours column not found (try exact header "PAID HOURS-TOTAL(FUNCTION,EMPLOYEE)").');
+
+  let deleted = 0;
+  for (let r = values.length - 1; r >= 1; r--) {
+    const raw = values[r][hourIdx];
+    const n = toNum_(raw);
+    if (isFinite(n) && n === 0) {
+      sheet.deleteRow(r + 1);
+      deleted++;
+    }
+  }
+  return deleted;
+}
+
+function findHeaderIndex_(headerRow, candidates) {
+  const lower = headerRow.map(h => h.toLowerCase());
+  for (const cand of candidates) {
+    const i = lower.indexOf(String(cand).toLowerCase());
+    if (i !== -1) return i;
+  }
+  return -1;
+}
+
+function cleanDataset_(records) {
+  const renameMap = {
+    'PAID HOURS-TOTAL(FUNCTION,EMPLOYEE)': 'Hours',
+    'UNITS': 'Units',
+    'UPH': 'UPH',
+    'LOGIN': 'Login',
+    'LC': 'LC'
+  };
+  const out = [];
+
+  for (const raw of records) {
+    // Case-insensitive rename
+    const row = {};
+    for (const key in raw) {
+      const canon = mapKeyCaseInsensitive_(key, renameMap) || key;
+      row[canon] = raw[key];
+    }
+    // Ensure keys
+    ['Hours','Units','UPH','LC'].forEach(k => { if (!(k in row)) row[k] = ''; });
+
+    // Coerce numerics
+    row.Hours = toNum_(row.Hours);
+    row.Units = toNum_(row.Units);
+    row.UPH   = toNum_(row.UPH);
+
+    // Normalize LC
+    row.LC = normLc_(row.LC);
+
+    // Drop invalids
+    if (!isFinite(row.Hours) || !isFinite(row.Units) || !isFinite(row.UPH)) continue;
+    if (row.Hours <= 0 || row.Units <= 0 || row.UPH <= 0) continue;
+
+    out.push(row);
+  }
+  return out;
+}
+
+function mapKeyCaseInsensitive_(k, map) {
+  if (k in map) return map[k];
+  const lk = String(k).toLowerCase();
+  for (const mk in map) {
+    if (mk.toLowerCase() === lk) return map[mk];
+  }
+  return null;
+}
+
+function toNum_(v) {
+  const s = String(v ?? '').replace(/,/g,'').trim();
+  const n = Number(s);
+  return isNaN(n) ? NaN : n;
+}
+
+function normLc_(v) {
+  if (v == null) return null;
+  const s = String(v).trim().toUpperCase();
+  let m = s.match(/LC\s*([1-5])/); if (m) return `LC${m[1]}`;
+  m = s.match(/LEVEL\s*([1-5])/);  if (m) return `LC${m[1]}`;
+  m = s.match(/\b([1-5])\b/);      if (m) return `LC${m[1]}`;
+  return null;
+}
+
+function computeMetrics_(rows, uphThreshold) {
+  const thr = Number(uphThreshold);
+  if (!isFinite(thr) || thr <= 0) throw new Error('UPH threshold must be a positive number.');
+
+  const sum = (a,b)=>a+b;
+
+  const total_units = Math.round(rows.map(r => r.Units).reduce(sum, 0));
+  const total_hours_raw = rows.map(r => r.Hours).reduce(sum, 0);
+  const total_hours = round2_(total_hours_raw);
+  const weighted_uph = round2_(total_hours_raw > 0 ? total_units / total_hours_raw : 0);
+
+  rows.forEach(r => r.Below_Standard = r.UPH < thr);
+
+  const lcs = ['LC1','LC2','LC3','LC4','LC5'];
+  const lc_stats = {};
+  for (const lc of lcs) {
+    const sub = rows.filter(r => r.LC === lc);
+    lc_stats[lc] = { total: sub.length, under: sub.filter(r => r.Below_Standard).length };
+  }
+
+  const total_associates = rows.length;
+  const total_under = rows.filter(r => r.Below_Standard).length;
+  const under_rate_pct = round1_(total_associates ? 100 * total_under / total_associates : 0);
+
+  const hoursArr = rows.map(r => r.Hours).sort((a,b)=>a-b);
+  const q25_hours = round2_(quantile_(hoursArr, 0.25));
+  rows.forEach(r => r.Short_Hours = r.Hours <= q25_hours);
+
+  const underRows = rows.filter(r => r.Below_Standard);
+  const short_share_pct = round1_(underRows.length ? 100 * underRows.filter(r => r.Short_Hours).length / underRows.length : 0);
+
+  // Top LCs by under-rate (break ties by count)
+  const lcRates = lcs.map(lc => {
+    const t = lc_stats[lc].total || 0;
+    const u = lc_stats[lc].under || 0;
+    const rate = t ? (u/t) : 0;
+    return { lc, rate, under: u, total: t };
+  }).sort((a,b)=>(b.rate - a.rate) || (b.under - a.under));
+  const targeted_lcs = lcRates.filter(x => x.under > 0).slice(0,2).map(x => x.lc);
+
+  // Are issues isolated to new hires? (little LC4/LC5 under)
+  const highLcUnder = (lc_stats['LC4'] ? lc_stats['LC4'].under : 0) +
+                      (lc_stats['LC5'] ? lc_stats['LC5'].under : 0);
+  const isolated_to_new_hires = highLcUnder < Math.max(1, Math.floor(0.4 * total_under));
+
+  return {
+    total_units, total_hours, weighted_uph, threshold: thr,
+    lcs, lc_stats, total_associates, total_under, under_rate_pct,
+    q25_hours, short_share_pct, isolated_to_new_hires, targeted_lcs
+  };
+}
+
+function buildCommentOnly_(longDate, m, funcName) {
+  const aboveBelow = m.weighted_uph >= m.threshold ? 'above' : 'below';
+  const isoPhrase = m.isolated_to_new_hires ? 'are isolated to new hires' : 'are not isolated to new hires';
+  const lcLines = m.lcs.map(lc => {
+    const s = (m.lc_stats[lc] || { total: 0, under: 0 });
+    return `${lc} had ${s.under} of ${s.total} under`;
+  }).join(', ') + '.';
+  const targeted = m.targeted_lcs.length ? m.targeted_lcs.join(', ') : 'LC5';
+
+  return `On ${longDate}, ${funcName} output totaled ${m.total_units} units over ${m.total_hours} hours, ` +
+         `averaging ${m.weighted_uph} UPH. This was ${aboveBelow} the ${m.threshold} UPH threshold. ` +
+         `However, ${m.total_under} associates (${m.under_rate_pct}%) fell below standard. ` +
+         `${lcLines} Performance issues ${isoPhrase}, with ` +
+         `${m.isolated_to_new_hires ? 'most issues concentrated in LC1–LC2' : 'notable underperformance among LC4–LC5'}. ` +
+         `Analysis indicates rate dilution from short-hour associates (bottom 25% by hours at ≤ ${m.q25_hours} hours), ` +
+         `accounting for approximately ${m.short_share_pct}% of below-threshold cases. ` +
+         `Recommended focus includes reinforcing pacing consistency, aligning work distribution to reduce dilution from ` +
+         `short-hour associates, and targeted coaching for ${targeted} associates to stabilize overall performance.`;
+}
+
+function parseDateFromNameOrToday_(name) {
+  const m = String(name).match(/(\d{2})\.(\d{2})\.(\d{2})/);
+  if (!m) {
+    const now = new Date();
+    return {
+      headerDate: Utilities.formatDate(now, Session.getScriptTimeZone(), '[MM.dd.yy]'),
+      longDate: Utilities.formatDate(now, Session.getScriptTimeZone(), 'MM.dd.yyyy')
+    };
+  }
+  const mm = m[1], dd = m[2], yy = m[3];
+  const longYear = Number(yy) <= 79 ? 2000 + Number(yy) : 1900 + Number(yy);
+  return { headerDate: `[${mm}.${dd}.${yy}]`, longDate: `${mm}.${dd}.${longYear}` };
+}
+
+function quantile_(sorted, p) {
+  if (!sorted.length) return 0;
+  const pos = (sorted.length - 1) * p;
+  const base = Math.floor(pos);
+  const rest = pos - base;
+  return sorted[base + 1] !== undefined
+    ? sorted[base] + rest * (sorted[base + 1] - sorted[base])
+    : sorted[base];
+}
+
+function round1_(x){ return Math.round((x + Number.EPSILON) * 10) / 10; }
+function round2_(x){ return Math.round((x + Number.EPSILON) * 100) / 100; }

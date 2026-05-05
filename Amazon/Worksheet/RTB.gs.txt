@@ -1,0 +1,207 @@
+/***** SHIP DOCK HOURS COMMENT — Button-driven, step-by-step toasts *****/
+//
+// SHEET:  HOURS  (single sheet — all data and output live here)
+//
+// ── CONFIG ──────────────────────────────────────────────────────────────────
+const HOURS_SHEET_NAME   = 'HOURS';
+
+// Adoption rate cells
+const ACTUAL_RATE_CELL   = 'L5';   // e.g. 2,088.90  (actual VOL/HR)
+const TARGET_RATE_CELL   = 'K3';   // e.g. 2,427.62  (LP rate target)
+
+// Total overspend cell (shown in totals row, e.g. 10.82)
+const TOTAL_DELTA_CELL   = 'M30';  // positive = over budget
+
+// Role table: header row number, and column letters
+const TABLE_HEADER_ROW   = 17;     // row that contains "SPENT", "LP BUDGET", "DELTA" headers
+const ROLE_NAME_COL      = 'I';    // column with role name   (e.g. "DEA Auditor")
+const SPENT_COL          = 'I';    // ** see note below — role names and SPENT share col I
+//
+// NOTE: From the screenshot the layout is:
+//   H  = Function label  ("Ship Dock Support")
+//   I  = Role name       ("DEA Auditor", "AR Floor Monitor" …)
+//   J  = SPENT hours
+//   K  = LP BUDGET hours
+//   L  = (empty)
+//   M  = DELTA  (positive = over budget)
+//
+const ROLE_COL           = 'I';    // role name
+const SPENT_HRS_COL      = 'J';    // spent hours
+const BUDGET_HRS_COL     = 'K';    // LP budget hours
+const DELTA_HRS_COL      = 'M';    // delta  (positive = overspend)
+
+// First and last data rows for the role table (rows with actual role data, not headers/totals)
+const TABLE_FIRST_ROW    = 18;     // first role row  (DEA Auditor)
+const TABLE_LAST_ROW     = 26;     // last role row   (Ship 5S)  — adjust if rows are added
+
+// Throughput reason cell — you pre-fill this on the HOURS sheet before clicking deploy
+// Leave blank if you prefer a pop-up prompt instead (script will ask via UI dialog)
+const THROUGHPUT_REASON_CELL = 'B39';  // e.g. "low CE volume with no outlet to reduce HC and VTO exhausted"
+
+// Where to write the finished comment
+const OUTPUT_CELL        = 'H37:M43';  // merged/wide cell where your comment box lives
+
+// ── ENTRY POINTS ────────────────────────────────────────────────────────────
+
+// Assign to a button for a quick sanity check — writes "PING OK" to output cell
+function sdh_ping() {
+  const sh = SpreadsheetApp.getActive().getSheetByName(HOURS_SHEET_NAME);
+  if (!sh) throw new Error(`Sheet "${HOURS_SHEET_NAME}" not found`);
+  sh.getRange(OUTPUT_CELL).setValue('PING OK');
+  SpreadsheetApp.getActive().toast('PING OK → ' + OUTPUT_CELL, 'SDH', 3);
+}
+
+// Main deploy — assign this to your button
+function deployHoursComment() {
+  const ss = SpreadsheetApp.getActive();
+  try {
+    toast_('Starting…');
+
+    const sh = mustGetSheet_(HOURS_SHEET_NAME);
+
+    // 1) Read adoption rate
+    const actualRate  = readNum_(sh, ACTUAL_RATE_CELL);
+    const targetRate  = readNum_(sh, TARGET_RATE_CELL);
+    if (!isFinite(actualRate) || !isFinite(targetRate)) {
+      throw new Error(`Could not read rates. Check ${ACTUAL_RATE_CELL} (actual) and ${TARGET_RATE_CELL} (target).`);
+    }
+    toast_(`Rates read → Actual: ${fmt2_(actualRate)} | Target: ${fmt2_(targetRate)}`);
+
+    // 2) Read total delta
+    const totalDelta = readNum_(sh, TOTAL_DELTA_CELL);
+    if (!isFinite(totalDelta)) {
+      throw new Error(`Could not read total delta from ${TOTAL_DELTA_CELL}.`);
+    }
+    toast_(`Total delta: ${fmt2_(totalDelta)} Hrs`);
+
+    // 3) Scan role table for overspenders (delta > 0)
+    const overspenders = getOverspenders_(sh);
+    if (overspenders.length === 0) {
+      toast_('No roles over budget — comment will note no overspend.', 5);
+    } else {
+      toast_(`Overspenders found: ${overspenders.map(r => r.role).join(', ')}`);
+    }
+
+    // 4) Get throughput reason
+    const reason = getThroughputReason_(sh, ss);
+    toast_(`Reason: "${reason.substring(0, 60)}${reason.length > 60 ? '…' : ''}"`);
+
+    // 5) Build comment
+    const comment = buildComment_(actualRate, targetRate, totalDelta, overspenders, reason);
+    toast_('Comment built — writing to sheet…');
+
+    // 6) Write output
+    sh.getRange(OUTPUT_CELL).setValue(comment).setWrap(true);
+    toast_(`Done! Comment written to ${HOURS_SHEET_NAME}!${OUTPUT_CELL}`, 5);
+
+  } catch (err) {
+    const msg = (err && err.message) ? err.message : String(err);
+    SpreadsheetApp.getActive().toast(`ERROR: ${msg}`, 'SDH', 8);
+  }
+}
+
+// ── COMMENT BUILDER ─────────────────────────────────────────────────────────
+
+function buildComment_(actualRate, targetRate, totalDelta, overspenders, reason) {
+  // Sentence 1 — adoption rate
+  const s1 = `Prior day, Ship Dock Support adoption was at a ${fmt2_(actualRate)} rate vs. target [${fmt2_(targetRate)}].`;
+
+  // Sentence 2 — overspend breakdown
+  let s2 = '';
+  if (overspenders.length === 0) {
+    s2 = `No individual roles exceeded LP budget hours.`;
+  } else {
+    // List roles with their individual deltas
+    // e.g. "Overspending by 10.82 Hrs was observed in TDR (+1.62), Robin Waterspider (+6.28), Ambassador (+0.24) and Empty Cont. Handler (+4.07), respectively."
+    const roleList = formatOverspenderList_(overspenders);
+    s2 = `Overspending by ${fmt2_(Math.abs(totalDelta))} Hrs was observed in ${roleList}, respectively.`;
+  }
+
+  // Sentence 3 — throughput / reason
+  const s3 = `Further, Ship Dock incurred support hours based on throughput due to ${reason}.`;
+
+  return `${s1} ${s2} ${s3}`;
+}
+
+// Formats: "TDR (+1.62), Robin Waterspider (+6.28), Ambassador (+0.24) and Empty Cont. Handler (+4.07)"
+function formatOverspenderList_(overspenders) {
+  if (overspenders.length === 1) {
+    return `${overspenders[0].role} (+${fmt2_(overspenders[0].delta)})`;
+  }
+  const last = overspenders[overspenders.length - 1];
+  const rest = overspenders.slice(0, -1);
+  return rest.map(r => `${r.role} (+${fmt2_(r.delta)})`).join(', ') + ` and ${last.role} (+${fmt2_(last.delta)})`;
+}
+
+// ── DATA READERS ────────────────────────────────────────────────────────────
+ 
+function getOverspenders_(sh) {
+  const results = [];
+  for (let row = TABLE_FIRST_ROW; row <= TABLE_LAST_ROW; row++) {
+    const roleName = String(sh.getRange(ROLE_COL + row).getValue() || '').trim();
+    if (!roleName) continue; // skip blank rows (e.g. Ship Training, Ship 5S if no hours)
+ 
+    const spent  = toNum_(sh.getRange(SPENT_HRS_COL  + row).getValue());
+    const budget = toNum_(sh.getRange(BUDGET_HRS_COL + row).getValue());
+    const delta  = toNum_(sh.getRange(DELTA_HRS_COL  + row).getValue());
+ 
+    // Use delta column if available; otherwise derive it
+    const effectiveDelta = isFinite(delta) ? delta
+                         : (isFinite(spent) && isFinite(budget)) ? (spent - budget)
+                         : NaN;
+ 
+    if (isFinite(effectiveDelta) && effectiveDelta > 0) {
+      results.push({ role: roleName, spent, budget, delta: effectiveDelta });
+    }
+  }
+  // Sort descending by delta so biggest offender is listed first
+  results.sort((a, b) => b.delta - a.delta);
+  return results;
+}
+ 
+function getThroughputReason_(sh) {
+  // Try the pre-filled cell first
+  const cellVal = String(sh.getRange(THROUGHPUT_REASON_CELL).getValue() || '').trim();
+  if (cellVal) return cellVal;
+ 
+  // Fall back to a UI prompt
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.prompt(
+    'Throughput Reason',
+    'Cell ' + THROUGHPUT_REASON_CELL + ' is blank.\n\nEnter the reason Ship Dock incurred support hours based on throughput:',
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (response.getSelectedButton() !== ui.Button.OK) {
+    throw new Error('Throughput reason not provided — deploy cancelled.');
+  }
+  const typed = response.getResponseText().trim();
+  if (!typed) throw new Error('Throughput reason was left blank — deploy cancelled.');
+  return typed;
+}
+
+// ── UTILITIES ───────────────────────────────────────────────────────────────
+
+function readNum_(sheet, a1) {
+  const v = sheet.getRange(a1).getValue();
+  return toNum_(v);
+}
+
+function toNum_(v) {
+  const s = String(v ?? '').replace(/,/g, '').trim();
+  const n = Number(s);
+  return isNaN(n) ? NaN : n;
+}
+
+function fmt2_(n) {
+  return Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function mustGetSheet_(name) {
+  const sh = SpreadsheetApp.getActive().getSheetByName(name);
+  if (!sh) throw new Error(`Sheet "${name}" not found`);
+  return sh;
+}
+
+function toast_(msg, seconds) {
+  SpreadsheetApp.getActive().toast(msg, 'SDH', seconds || 3);
+}

@@ -1,0 +1,14 @@
+// Optional menu
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('RTB')
+    .addItem('Analyze', 'deploy')
+    .addItem('Ping (button test)', 'rtb_ping')
+    .addItem('Deleter', 'deleter')
+    .addItem('Tab Names', 'exportTabNames')
+    .addItem('AR Split', 'appendToG2NoTimestamp')
+    .addItem('DB Clear', 'db_clear')
+    .addItem("Archive Input", "archiveRTBData")
+    .addToUi();
+}
+

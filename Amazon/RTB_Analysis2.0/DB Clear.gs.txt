@@ -1,0 +1,5 @@
+function db_clear() {
+  var spreadsheet = SpreadsheetApp.getActive();
+  spreadsheet.getRangeList(['B2:V150']).activate()
+  .clear({contentsOnly: true, skipFilteredRows: false});
+};

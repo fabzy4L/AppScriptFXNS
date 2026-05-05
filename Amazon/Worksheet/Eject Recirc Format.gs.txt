@@ -1,0 +1,134 @@
+function splitColumnG() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  var lastRow = sheet.getLastRow();
+  
+  if (lastRow < 2) return; // No data to process
+  
+  // 1. Sort the data in descending order based on Column B (Column 2)
+  var dataRange = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn());
+  dataRange.sort({column: 2, ascending: false});
+  
+  // 2. Filter (delete) rows where Column E (Column 5) is 0% or less
+  // We loop backwards when deleting rows to avoid shifting index issues
+  var valuesE = sheet.getRange(2, 5, lastRow - 1, 1).getValues();
+  for (var i = valuesE.length - 1; i >= 0; i--) {
+    var val = parseFloat(valuesE[i][0]);
+    // Checking if the value is 0 or negative
+    if (!isNaN(val) && val <= 0) {
+      sheet.deleteRow(i + 2);
+    }
+  }
+  
+  // Update lastRow after deletion
+  lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+  
+  // Get values from Column G (Column 7) starting from row 2
+  var rangeG = sheet.getRange(2, 7, lastRow - 1, 1);
+  var valuesG = rangeG.getValues();
+  
+  var splitValues = [];
+  var maxCols = 0;
+  
+  // Split the values by newline
+  for (var i = 0; i < valuesG.length; i++) {
+    var cellValue = valuesG[i][0].toString();
+    var splitArray = cellValue ? cellValue.split('\n') : [""]; 
+    splitValues.push(splitArray);
+    if (splitArray.length > maxCols) {
+      maxCols = splitArray.length;
+    }
+  }
+  
+  // Pad the arrays to have the same length for setValues
+  for (var i = 0; i < splitValues.length; i++) {
+    while (splitValues[i].length < maxCols) {
+      splitValues[i].push("");
+    }
+  }
+  
+  var lastCol = sheet.getLastColumn();
+  
+  // Write the split values to the new columns
+  if (maxCols > 0) {
+    var targetRange = sheet.getRange(2, lastCol + 1, splitValues.length, maxCols);
+    targetRange.setValues(splitValues);
+  }
+}
+
+/**
+ * Executes the data isolation logic.
+ */
+function runIsolateData() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  
+  // Get or create the Isolated_Data sheet
+  var targetSheet = ss.getSheetByName("Isolated_Data");
+  if (!targetSheet) {
+    targetSheet = ss.insertSheet("Isolated_Data");
+  } else {
+    targetSheet.clear(); // Clear existing content to start fresh
+  }
+  
+  // Set up headers
+  targetSheet.getRange("A1").setValue("Sort Key").setFontWeight("bold");
+  targetSheet.getRange("B1").setValue("Value").setFontWeight("bold");
+  
+  // Apply the dynamic formula
+  var formula = '=iferror(ARRAYFORMULA(SPLIT(TOCOL(IF(DF_R!I2:ZZ <> "", DF_R!A2:A & "♦️" & DF_R!I2:ZZ, NA()), 3), "♦️")))';
+  targetSheet.getRange("A2").setFormula(formula);
+  
+  // Auto-resize columns for readability
+  targetSheet.autoResizeColumns(1, 2);
+  
+  // Focus on the new sheet
+  targetSheet.activate();
+}
+
+function countChutesPerSortKey() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sourceSheet = ss.getSheetByName("Isolated_Data");
+  
+  if (!sourceSheet) {
+    SpreadsheetApp.getUi().alert("Isolated_Data' not found.");
+    return;
+  }
+
+  // Get all data from the sheet (A1:B range)
+  const data = sourceSheet.getDataRange().getValues();
+  const header = data.shift(); // Remove header row
+  
+  const counts = {};
+
+  // Iterate through rows and count occurrences of each Sort Key
+  data.forEach(row => {
+    const sortKey = row[0];
+    if (sortKey) {
+      counts[sortKey] = (counts[sortKey] || 0) + 1;
+    }
+  });
+
+  // Convert the counts object into a 2D array for the spreadsheet
+  const results = [["Sort Key", "Chute Count"]];
+  for (const key in counts) {
+    results.push([key, counts[key]]);
+  }
+
+  // Sort results alphabetically by Sort Key
+  results.sort((a, b) => a[0].localeCompare(b[0]));
+
+  // Create or clear a Summary sheet
+  let summarySheet = ss.getSheetByName("Chute Summary");
+  if (!summarySheet) {
+    summarySheet = ss.insertSheet("Chute Summary");
+  } else {
+    summarySheet.clear();
+  }
+
+  // Write the results to the Summary sheet
+  summarySheet.getRange(1, 1, results.length, 2).setValues(results);
+  summarySheet.getRange(1, 1, 1, 2).setFontWeight("bold");
+  summarySheet.autoResizeColumn(1);
+  
+  SpreadsheetApp.getUi().alert("Summary created in 'Chute Summary' tab.");
+}

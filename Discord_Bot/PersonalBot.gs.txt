@@ -1,0 +1,412 @@
+// ── ENTRY POINT ──────────────────────────────────────────────────
+function runDailyDigest() {
+  const items = [];
+
+  items.push(...collectTasks());
+  items.push(...collectCalendar());
+  items.push(...collectGmailBills());
+  items.push(...collectGmailHealth());
+  items.push(...collectGmailSocial());
+  items.push(...collectBirthdays());
+
+  // Sort by score descending
+  items.sort((a, b) => b.score - a.score);
+
+  sendDigest(items);
+}
+
+// ══════════════════════════════════════════════════════════════════
+// COLLECTORS
+// ══════════════════════════════════════════════════════════════════
+
+// ── TASKS ────────────────────────────────────────────────────────
+function collectTasks() {
+  const items = [];
+  const now   = new Date();
+  const S     = CONFIG.scoring;
+
+  try {
+    const lists = Tasks.Tasklists.list({ maxResults: 20 }).items || [];
+
+    lists.forEach(list => {
+      if (CONFIG.tasks.listsToCheck.length &&
+          !CONFIG.tasks.listsToCheck.includes(list.title)) return;
+
+      const tasks = Tasks.Tasks.list(list.id, {
+        showCompleted: false,
+        showHidden:    false,
+        maxResults:    50
+      }).items || [];
+
+      tasks.forEach(task => {
+        if (!task.title || task.status === "completed") return;
+
+        const due         = task.due ? new Date(task.due) : null;
+        // Compare dates only, ignore time
+        const dueDate = due ? new Date(due.getFullYear(), due.getMonth(), due.getDate()) : null;
+        const today   = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const daysUntil = dueDate ? Math.round((dueDate - today) / 86400000) : null;
+        let score = 0;
+        let urgency       = "🟢";
+        let label         = "";
+
+        if (due) {
+          if (daysUntil < 0)        { score = S.OVERDUE_TASK;        urgency = "🔴"; label = `Overdue by ${Math.abs(daysUntil)}d`; }
+          else if (daysUntil === 0) { score = S.DUE_TODAY_TASK;      urgency = "🔴"; label = "Due today"; }
+          else if (daysUntil <= 7)  { score = S.DUE_THIS_WEEK_TASK;  urgency = "🟡"; label = `Due in ${daysUntil}d`; }
+          else                      { score = 3;                      urgency = "🟢"; label = `Due in ${daysUntil}d`; }
+          // ↑ removed the `else return` — tasks beyond 7 days now show on radar
+        } else {
+          score   = 3;
+          urgency = "🟢";
+          label   = "No due date — needs scheduling";
+        }
+
+        items.push({
+          category: "✅ Tasks",
+          urgency,
+          score,
+          text:  `**${task.title}** — ${label}`,
+          label: list.title
+        });
+      });
+    });
+  } catch (e) {
+    Logger.log("Tasks error: " + e.message);
+  }
+
+  return items;
+}
+
+// ── CALENDAR ─────────────────────────────────────────────────────
+function collectCalendar() {
+  const items   = [];
+  const now     = new Date();
+  const future  = new Date(now.getTime() + CONFIG.calendar.lookAheadDays * 86400000);
+  const S       = CONFIG.scoring;
+
+  try {
+    CalendarApp.getAllCalendars().forEach(cal => {
+      if (CONFIG.calendar.excludedCalendars.includes(cal.getName())) return;
+
+      cal.getEvents(now, future).forEach(event => {
+        const title       = event.getTitle();
+        const start       = event.getStartTime();
+        const hoursUntil  = (start - now) / 3600000;
+        const daysUntil   = Math.ceil(hoursUntil / 24);
+        const isHealth    = CONFIG.calendar.healthKeywords
+                              .some(k => title.toLowerCase().includes(k));
+
+        let score   = hoursUntil <= 24 ? S.EVENT_TODAY : S.EVENT_TOMORROW;
+        let urgency = hoursUntil <= 24 ? "🔴" : "🟡";
+
+        if (isHealth) { score = S.HEALTH_APPOINTMENT; urgency = "🔴"; }
+
+        const isAllDay = event.isAllDayEvent();
+        const timeStr  = isAllDay ? "All day" : start.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        const dayStr  = daysUntil === 0 ? "Today" :
+                        daysUntil === 1 ? "Tomorrow" : `In ${daysUntil}d`;
+
+        items.push({
+          category: isHealth ? "🏥 Health" : "📅 Calendar",
+          urgency,
+          score,
+          text:  `**${title}** — ${dayStr} at ${timeStr}`,
+          label: cal.getName()
+        });
+      });
+    });
+  } catch (e) {
+    Logger.log("Calendar error: " + e.message);
+  }
+
+  return items;
+}
+
+// ── GMAIL: BILLS & FINANCE ────────────────────────────────────────
+function collectGmailBills() {
+  const items   = [];
+  const S       = CONFIG.scoring;
+  const exclude = buildExcludeQuery();
+
+  try {
+    const query = `is:unread newer_than:30d -category:promotions -category:updates (${CONFIG.gmail.billKeywords.map(k => `"${k}"`).join(" OR ")}) ${exclude}`;
+    const threads = GmailApp.search(query, 0, CONFIG.gmail.maxResults);
+
+    threads.forEach(thread => {
+      const msg       = thread.getMessages()[0];
+      const subject   = msg.getSubject();
+      const from      = extractSender(msg.getFrom());
+      const daysOld   = Math.floor((new Date() - msg.getDate()) / 86400000);
+      const isOverdue = /overdue|past due|final notice/i.test(subject);
+
+      const score   = isOverdue ? S.OVERDUE_BILL : S.BILL_EMAIL;
+      const urgency = isOverdue ? "🔴" : daysOld > 5 ? "🟡" : "🟢";
+
+      items.push({
+        category: "💰 Finance",
+        urgency,
+        score,
+        text:  `**${subject}** — from ${from}`,
+        label: daysOld === 0 ? "Today" : `${daysOld}d ago`
+      });
+    });
+  } catch (e) {
+    Logger.log("Gmail bills error: " + e.message);
+  }
+
+  return items;
+}
+
+// ── GMAIL: HEALTH ─────────────────────────────────────────────────
+function collectGmailHealth() {
+  const items   = [];
+  const S       = CONFIG.scoring;
+  const exclude = buildExcludeQuery();
+
+  try {
+    const query = `is:unread newer_than:30d (${CONFIG.gmail.healthKeywords.map(k => `"${k}"`).join(" OR ")}) ${exclude}`;
+    const threads = GmailApp.search(query, 0, CONFIG.gmail.maxResults);
+
+    threads.forEach(thread => {
+      const msg     = thread.getMessages()[0];
+      const subject = msg.getSubject();
+      const from    = extractSender(msg.getFrom());
+      const daysOld = Math.floor((new Date() - msg.getDate()) / 86400000);
+
+      items.push({
+        category: "🏥 Health",
+        urgency:  daysOld > 3 ? "🟡" : "🟢",
+        score:    S.UNREAD_HEALTH,
+        text:     `**${subject}** — from ${from}`,
+        label:    daysOld === 0 ? "Today" : `${daysOld}d ago`
+      });
+    });
+  } catch (e) {
+    Logger.log("Gmail health error: " + e.message);
+  }
+
+  return items;
+}
+
+// ── GMAIL: SOCIAL ─────────────────────────────────────────────────
+function collectGmailSocial() {
+  const items   = [];
+  const S       = CONFIG.scoring;
+  const exclude = buildExcludeQuery();
+
+  try {
+    // Stale unread personal emails (not automated)
+    const query = `is:unread older_than:${CONFIG.gmail.staleDays}d newer_than:30d -from:noreply -from:no-reply -category:promotions -category:updates ${exclude}`;
+    const threads = GmailApp.search(query, 0, CONFIG.gmail.maxResults);
+
+    threads.forEach(thread => {
+      const msg     = thread.getMessages()[0];
+      const subject = msg.getSubject();
+      const from    = extractSender(msg.getFrom());
+      const daysOld = Math.floor((new Date() - msg.getDate()) / 86400000);
+      const isSocial = CONFIG.gmail.socialKeywords
+                         .some(k => (subject + msg.getPlainBody().substring(0, 100))
+                         .toLowerCase().includes(k));
+
+      if (!isSocial && daysOld < 5) return;
+
+      items.push({
+        category: "👥 Social",
+        urgency:  daysOld > 7 ? "🔴" : "🟡",
+        score:    isSocial ? S.SOCIAL_FOLLOWUP : S.STALE_EMAIL,
+        text:     `**${subject}** — from ${from}`,
+        label:    `${daysOld}d unread`
+      });
+    });
+  } catch (e) {
+    Logger.log("Gmail social error: " + e.message);
+  }
+
+  return items;
+}
+
+// ── BIRTHDAYS (Google Contacts) ───────────────────────────────────
+function collectBirthdays() {
+  const items     = [];
+  const S         = CONFIG.scoring;
+  const now       = new Date();
+  const lookAhead = CONFIG.contacts.birthdayLookAheadDays;
+
+  try {
+    const people = People.People.Connections.list("people/me", {
+        personFields: "names,birthdays",
+        pageSize:     100
+    }).connections || []; 
+
+    people.forEach(person => {
+      if (!person.birthdays) return;
+
+      person.birthdays.forEach(bday => {
+        if (!bday.date) return;
+        const { month, day } = bday.date;
+        const thisYear  = now.getFullYear();
+        const bdayDate  = new Date(thisYear, month - 1, day);
+        if (bdayDate < now) bdayDate.setFullYear(thisYear + 1);
+
+        const daysUntil = Math.ceil((bdayDate - now) / 86400000);
+        if (daysUntil > lookAhead) return;
+
+        const name    = person.names?.[0]?.displayName || "Someone";
+        const score   = daysUntil === 0 ? S.BIRTHDAY_TODAY :
+                        daysUntil <= 3  ? S.BIRTHDAY_3_DAYS : S.BIRTHDAY_WEEK;
+        const urgency = daysUntil === 0 ? "🔴" :
+                        daysUntil <= 3  ? "🟡" : "🟢";
+        const label   = daysUntil === 0 ? "TODAY 🎂" :
+                        daysUntil === 1 ? "Tomorrow" : `In ${daysUntil} days`;
+
+        items.push({
+          category: "👥 Social",
+          urgency,
+          score,
+          text:  `**${name}'s birthday** — ${label}`,
+          label: ""
+        });
+      });
+    });
+  } catch (e) {
+    Logger.log("Birthdays error: " + e.message);
+  }
+
+  return items;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// PRIORITIZER  ← this is the ONE function you'll swap for Ollama
+// ══════════════════════════════════════════════════════════════════
+function prioritize(items) {
+  const urgent = items.filter(i => i.urgency === "🔴").slice(0, 8); // was 5
+  const soon   = items.filter(i => i.urgency === "🟡").slice(0, 6); // was 4
+  const radar  = items.filter(i => i.urgency === "🟢").slice(0, 5); // was 3
+  return { urgent, soon, radar };
+}
+
+// ══════════════════════════════════════════════════════════════════
+// DISCORD OUTPUT
+// ══════════════════════════════════════════════════════════════════
+function sendDigest(items) {
+  if (!items.length) {
+    sendRaw("✅ **All clear** — nothing needs your attention today.");
+    return;
+  }
+
+  const { urgent, soon, radar } = prioritize(items);
+  const webhook = PropertiesService.getScriptProperties()
+                    .getProperty("DISCORD_WEBHOOK");
+
+  const now       = new Date();
+  const dateStr   = now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+
+  const fields = [];
+
+  if (urgent.length) {
+    fields.push({
+      name:   "🔴 NEEDS ATTENTION NOW",
+      value:  urgent.map((i, n) => `**${n+1}.** [${i.category}] ${i.text} *(${i.label})*`).join("\n"),
+      inline: false
+    });
+  }
+
+  if (soon.length) {
+    fields.push({
+      name:   "🟡 THIS WEEK",
+      value:  soon.map((i, n) => `**${n+1}.** [${i.category}] ${i.text} *(${i.label})*`).join("\n"),
+      inline: false
+    });
+  }
+
+  if (radar.length) {
+    fields.push({
+      name:   "🟢 ON YOUR RADAR",
+      value:  radar.map((i, n) => `**${n+1}.** [${i.category}] ${i.text} *(${i.label})*`).join("\n"),
+      inline: false
+    });
+  }
+
+  const payload = {
+    embeds: [{
+      title:       `🧠 Personal Briefing — ${dateStr}`,
+      description: `${items.length} item${items.length !== 1 ? "s" : ""} across your life. Here's what matters:`,
+      color:       urgent.length ? 0xFF4444 : 0xFFAA00,
+      fields,
+      footer:      { text: "PersonalBot • Rule-based priority • Ollama upgrade coming" },
+      timestamp:   now.toISOString()
+    }]
+  };
+
+  UrlFetchApp.fetch(webhook, {
+    method:      "post",
+    contentType: "application/json",
+    payload:     JSON.stringify(payload)
+  });
+}
+
+function sendRaw(text) {
+  const webhook = PropertiesService.getScriptProperties()
+                    .getProperty("DISCORD_WEBHOOK");
+  UrlFetchApp.fetch(webhook, {
+    method:      "post",
+    contentType: "application/json",
+    payload:     JSON.stringify({ content: text })
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════
+// HELPERS
+// ══════════════════════════════════════════════════════════════════
+function buildExcludeQuery() {
+  return CONFIG.gmail.excluded
+    .map(e => e.startsWith("label:") ? `-${e}` : `-from:${e}`)
+    .join(" ");
+}
+
+function extractSender(from) {
+  const match = from.match(/^(.+?)\s*</);
+  return match ? match[1].trim() : from;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// SETUP
+// ══════════════════════════════════════════════════════════════════
+function setupTrigger() {
+  ScriptApp.getProjectTriggers().forEach(t => ScriptApp.deleteTrigger(t));
+
+  ScriptApp.newTrigger("runDailyDigest")
+    .timeBased()
+    .atHour(6)
+    .everyDays(1)
+    .inTimezone(CONFIG.digest.timezone)
+    .create();
+
+  Logger.log("✅ Trigger set — daily digest at 6am");
+}
+
+
+// ══════════════════════════════════════════════════════════════════
+// OAUTH
+// ══════════════════════════════════════════════════════════════════
+function forceAuth() {
+  TasksApp.getDefaultList();
+  Logger.log("Auth triggered");
+}
+
+function testPeople() {
+  Logger.log(Object.keys(People.People));
+}
+
+function testTasks() {
+  const lists = Tasks.Tasklists.list({ maxResults: 20 }).items || [];
+  lists.forEach(list => {
+    Logger.log("List: " + list.title);
+    const tasks = Tasks.Tasks.list(list.id, {
+      showCompleted: false,
+      maxResults: 20
+    }).items || [];
+    tasks.forEach(t => Logger.log("  - " + t.title + " | due: " + t.due));
+  });
+}

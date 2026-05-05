@@ -1,0 +1,11 @@
+function period_clear() {
+  var spreadsheet = SpreadsheetApp.getActive();
+  spreadsheet.getRangeList(['AG6:AI11']).activate()
+  .clear({contentsOnly: true, skipFilteredRows: false});
+};
+
+//for several at once without having to necessarily call curson onto spot
+function total_clear() {
+  const ss = SpreadsheetApp.getActive();
+  ss.getRangeList(['U6:W12', 'U20:W25']).clearContent();
+}

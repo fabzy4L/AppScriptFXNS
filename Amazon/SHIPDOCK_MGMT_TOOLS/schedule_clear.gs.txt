@@ -1,0 +1,5 @@
+function scheduled_clear() {
+  var spreadsheet = SpreadsheetApp.getActive();
+  spreadsheet.getRangeList(['A1:M1000']).activate()
+  .clear({contentsOnly: true, skipFilteredRows: false});
+};

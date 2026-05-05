@@ -1,0 +1,60 @@
+/**
+ * @OnlyCurrentDoc
+ *
+ * A simple script that exports the names of all tabs in the active spreadsheet
+ * to a separate sheet named "Tab Names". It will create this sheet if it doesn't exist.
+ */
+function exportTabNames() {
+  const ss = SpreadsheetApp.getActive();
+  
+  // Get or create the destination sheet. The 'false' parameter ensures we don't clear the sheet.
+  const destSheetName = "Tab Names";
+  const dest = getOrCreateDest_(destSheetName, false);
+  
+  const tabNames = [];
+  
+  // Get all sheets and extract their names
+  const sheets = ss.getSheets();
+  sheets.forEach(sh => {
+    // We don't want to include the destination sheet name in the list of tabs.
+    if (sh.getSheetName() !== destSheetName) {
+      tabNames.push([sh.getSheetName()]);
+    }
+  });
+  
+  // Get the last row with data to determine where to start writing.
+  const lastRow = dest.getLastRow();
+  let startRow = lastRow + 1;
+
+  // Add a header if the sheet is empty
+  if (lastRow === 0) {
+    dest.getRange(1, 1).setValue("Tab Name");
+    startRow++;
+  }
+
+  // Append the new tab names
+  if (tabNames.length > 0) {
+    dest.getRange(startRow, 1, tabNames.length, 1).setValues(tabNames);
+  }
+  
+  SpreadsheetApp.getActive().toast(`Exported ${tabNames.length} tab names to "${destSheetName}".`, 'Tab Exporter', 5);
+}
+
+/**
+ * Helper function to get a sheet by name or create it if it doesn't exist.
+ * This is a modified version of the function from your previous scripts.
+ *
+ * @param {string} name The name of the sheet to get or create.
+ * @param {boolean} clearFirst If true, clears the sheet's contents and formats.
+ * @returns {GoogleAppsScript.Spreadsheet.Sheet} The sheet object.
+ */
+function getOrCreateDest_(name, clearFirst) {
+  const ss = SpreadsheetApp.getActive();
+  let sh = ss.getSheetByName(name);
+  if (!sh) sh = ss.insertSheet(name);
+  if (clearFirst) {
+    sh.clearContents();
+    sh.clearFormats();
+  }
+  return sh;
+}

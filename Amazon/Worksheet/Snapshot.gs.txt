@@ -1,0 +1,52 @@
+/**
+ * Copies range 'A1:AJ15' to a separate Archive Spreadsheet.
+ * The tab name is pulled from cell B1.
+ */
+function archiveToExternalSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sourceSheet = ss.getActiveSheet();
+  const SOURCE_RANGE_A1 = 'A1:AJ15';
+  
+  // 1. Enter the ID of your DESTINATION Spreadsheet here
+  // You find this in the URL: https://docs.google.com/spreadsheets/d/1-8bOl85oZWzBv041ELOfb6gSQ63Crl8D24DRoxVcQog/edit
+  const targetSsId = '1-8bOl85oZWzBv041ELOfb6gSQ63Crl8D24DRoxVcQog'; 
+  const targetSs = SpreadsheetApp.openById(targetSsId);
+
+  // 2. Get the Date from Cell B1 to use as the Tab Name
+  const rawDate = sourceSheet.getRange('B1').getValue();
+  
+  // Format date to "MM-DD-YYYY" (or your preferred format)
+  // If B1 is already a string, you can skip Utilities.formatDate
+  let tabName;
+  if (rawDate instanceof Date) {
+    tabName = Utilities.formatDate(rawDate, Session.getScriptTimeZone(), "MM-dd-yyyy");
+  } else {
+    tabName = String(rawDate).trim();
+  }
+
+  if (!tabName) {
+    SpreadsheetApp.getUi().alert("Error: Cell B1 is empty. Cannot name the tab.");
+    return;
+  }
+
+  // 3. Get the source data
+  const dataRange = sourceSheet.getRange(SOURCE_RANGE_A1);
+  const values = dataRange.getValues();
+  const formats = dataRange.getNumberFormats();
+
+  // 4. Find or Create the tab in the Target Spreadsheet
+  let targetSheet = targetSs.getSheetByName(tabName);
+  if (!targetSheet) {
+    targetSheet = targetSs.insertSheet(tabName);
+  } else {
+    targetSheet.clear(); // Clear existing data if tab already exists
+  }
+
+  // 5. Write the data and preserve number formatting (dates, currency, etc.)
+  const destRange = targetSheet.getRange(1, 1, values.length, values[0].length);
+  destRange.setValues(values);
+  destRange.setNumberFormats(formats);
+
+  // Success Notification
+  ss.toast(`Data successfully copied to tab "${tabName}" in the archive file.`, 'Success');
+}

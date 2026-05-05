@@ -1,0 +1,100 @@
+// ── SECRETS (store via Project Settings → Script Properties) ─────
+// Run storeSecrets() once, then delete it.
+
+// ADD SCRIPT HERE
+
+// ── BOT CONFIGURATION ────────────────────────────────────────────
+const CONFIG = {
+
+  digest: {
+    hour: 6,              // 6am
+    timezone: "America/New_York"  // change to your timezone
+  },
+
+  gmail: {
+    maxResults: 20,
+    staleDays: 3,         // flag emails unread longer than this
+    // Senders/labels to always SKIP
+    excluded: [
+      "googlealerts-noreply@google.com",
+      "no-reply@accounts.google.com",
+      "label:labmind",
+      "@bestbuy.com",
+      "@apple.com",
+      "@spotify.com",
+      "noreply@",
+      "no-reply@",
+      "deals@",
+      "offers@",
+      "newsletter@",
+      "promotions@",
+      "@creditkarma.com",
+      "@ancestry.com",
+      "@grantwatch.com",
+      "@upgrade.com",
+      "@flexshopper.com",
+      "@samsclub.com",
+      "@tubi.com",
+      // Health false positives
+      "@nerdwallet.com",
+      "@indeed.com",
+      "@linkedin.com",
+      "@ziprecruiter.com"
+    ],
+    billKeywords: [
+      "invoice", "payment due", "due date", "amount due",
+      "bill ready", "statement", "past due", "overdue",
+      "subscription", "renewal", "autopay", "receipt"
+    ],
+    healthKeywords: [
+      "appointment", "reminder", "prescription", "refill",
+      "lab results", "doctor", "clinic", "insurance", "EOB",
+      "medical", "dental", "vision", "pharmacy",   "appointment", "appointment reminder", "prescription ready","refill reminder", "lab results", "test results", "your doctor", "clinic", "patient portal", "medical records", "dental", "vision benefits", "pharmacy"
+    ],
+    socialKeywords: [
+      "following up", "checking in", "catch up", "let me know",
+      "are you available", "RSVP", "birthday"
+    ]
+  },
+
+  calendar: {
+    lookAheadDays: 7,
+    urgentWithinHours: 24,
+    excludedCalendars: [],     // e.g. ["Work Calendar"] to skip work
+    healthKeywords: [
+      "doctor", "dentist", "therapy", "appointment",
+      "checkup", "gym", "workout", "physio"
+    ]
+  },
+
+  tasks: {
+    // Leave empty [] to check ALL task lists
+    // Or specify: ["Personal", "Health", "Finance"]
+    listsToCheck: ["PERSONAL", "PROJECTS"],
+    lookAheadDays: 7
+  },
+
+  contacts: {
+    birthdayLookAheadDays: 7
+  },
+
+  // ── SCORING WEIGHTS ─────────────────────────────────────────────
+  // Higher = more urgent. Adjust to your preferences.
+  scoring: {
+    OVERDUE_TASK:        10,
+    DUE_TODAY_TASK:       8,
+    DUE_THIS_WEEK_TASK:   4,
+    BILL_EMAIL:           9,
+    OVERDUE_BILL:        12,
+    HEALTH_APPOINTMENT:   8,
+    BIRTHDAY_TODAY:      10,
+    BIRTHDAY_3_DAYS:      8,
+    BIRTHDAY_WEEK:        5,
+    STALE_EMAIL:          4,
+    SOCIAL_FOLLOWUP:      5,
+    EVENT_TODAY:          7,
+    EVENT_TOMORROW:       5,
+    UNREAD_HEALTH:        7,
+    NEEDS_REPLY:          6
+  }
+};

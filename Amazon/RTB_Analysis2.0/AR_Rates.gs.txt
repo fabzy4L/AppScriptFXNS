@@ -1,0 +1,52 @@
+/**
+ * Appends range 'N1:S50' to a specific tab in a separate Spreadsheet,
+ * starting at Column G (Column 7) without a timestamp.
+ */
+function appendToG2NoTimestamp() {
+  const ss = SpreadsheetApp.getActive();
+  const sourceSheet = ss.getActiveSheet();
+  const SOURCE_RANGE_A1 = 'N1:S50';
+  
+  // 1. Destination Settings
+  const targetSsId = '1UPc-57-zEcy576bnP3dJ7sYCvmSdYVRvAp01ttOEVLU'; 
+  const targetTabName = 'AR_SPLIT'; 
+  const targetSs = SpreadsheetApp.openById(targetSsId);
+  let targetSheet = targetSs.getSheetByName(targetTabName);
+
+  if (!targetSheet) {
+    targetSheet = targetSs.insertSheet(targetTabName);
+  }
+
+  // 2. Get and filter the source data
+  const dataRange = sourceSheet.getRange(SOURCE_RANGE_A1);
+  const values = dataRange.getValues();
+
+  // Remove fully blank rows so we don't append empty space
+  const out = values.filter(row => row.join("").trim() !== "");
+
+  // 3. Determine where to write
+  if (out.length > 0) {
+    // Check column G (7) specifically to find the last row of data
+    const columnGValues = targetSheet.getRange("G:G").getValues();
+    let lastRowInG = 0;
+    
+    // Iterate backwards to find the last non-empty cell in Column G
+    for (let i = columnGValues.length - 1; i >= 0; i--) {
+      if (columnGValues[i][0] !== "") {
+        lastRowInG = i + 1;
+        break;
+      }
+    }
+    
+    // Start at row 2 if G is empty, otherwise append at the bottom
+    const startRow = Math.max(2, lastRowInG + 1);
+    const startCol = 7; // Column G
+
+    // 4. Write the data
+    targetSheet.getRange(startRow, startCol, out.length, out[0].length).setValues(out);
+    
+    ss.toast(`Appended ${out.length} rows starting at G${startRow}.`, 'Success');
+  } else {
+    ss.toast("No data found in range N1:S50.", "Warning");
+  }
+}

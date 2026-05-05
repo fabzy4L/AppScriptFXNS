@@ -1,0 +1,14 @@
+function ViewScheduled() {
+  var spreadsheet = SpreadsheetApp.getActive();
+  spreadsheet.getRange('M1').activate();
+  var criteria = SpreadsheetApp.newFilterCriteria()
+  .setHiddenValues([''])
+  .build();
+  spreadsheet.getActiveSheet().getFilter().setColumnFilterCriteria(13, criteria);
+  spreadsheet.getRange('D1').activate();
+  spreadsheet.getActiveSheet().getFilter().sort(4, true);
+  spreadsheet.getRange('B1').activate();
+  spreadsheet.getActiveSheet().getFilter().sort(2, true);
+  spreadsheet.getRange('I1').activate();
+  spreadsheet.getActiveSheet().getFilter().sort(9, true);
+};

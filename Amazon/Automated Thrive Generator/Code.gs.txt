@@ -1,0 +1,256 @@
+// ============================================================
+// THRIVE REPORT GENERATOR v6
+// Reads your existing DARPA / LARPA tabs directly.
+// Averages date-column scores + per-expectation hit rate.
+// Outputs a plain-text narrative tab named "PA – Month".
+// ============================================================
+
+// ── CONFIG ───────────────────────────────────────────────────
+// Map each PA tab name → role template tab name
+// Add/edit entries here when roster changes
+const PA_CONFIG = {
+  "bbreonre" : { displayName: "Bre Reid",         role: "LARPA" },
+  "teyfaulk" : { displayName: "Teyaca Faulk",      role: "LARPA" },
+  "clemakan" : { displayName: "Makayla Clements",  role: "DARPA" },
+  "tbarrerm" : { displayName: "Treissi Barrera",   role: "SSD"   },
+};
+
+// Rating thresholds (% of expectations met)
+const THRESH = { EXCEEDING: 0.9, MEETING: 0.7, PARTIAL: 0.4 };
+
+// Row where section headers live (black rows in your sheet)
+// These are the exact strings in col A that mark sections
+const SECTION_MARKERS = {
+  "Tasks"      : ["Task", "Handoff Validation", "Handoff & DEA Review"],
+  "Metrics"    : ["Metric / System"],
+  "Quality"    : ["Quality Target"],
+  "Deliverables": ["Deliverable"],
+};
+
+// ─────────────────────────────────────────────────────────────
+// MENU
+// ─────────────────────────────────────────────────────────────
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu("🟠 Thrive Tools")
+    .addItem("Generate Report", "showGenerateDialog")
+    .addToUi();
+}
+
+// ─────────────────────────────────────────────────────────────
+// DIALOG — pick PA tab + month
+// ─────────────────────────────────────────────────────────────
+function showGenerateDialog() {
+  const ss   = SpreadsheetApp.getActiveSpreadsheet();
+  const ui   = SpreadsheetApp.getUi();
+  const tabs = Object.keys(PA_CONFIG);
+
+  // Pick PA
+  const paResp = ui.prompt(
+    "Generate Thrive Report",
+    `Enter PA tab name:\n(${tabs.join(", ")})`,
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (paResp.getSelectedButton() !== ui.Button.OK) return;
+  const paTab = paResp.getResponseText().trim();
+
+  if (!PA_CONFIG[paTab]) {
+    ui.alert(`"${paTab}" not found in PA_CONFIG. Check spelling or add it to the config.`);
+    return;
+  }
+  if (!ss.getSheetByName(paTab)) {
+    ui.alert(`Tab "${paTab}" does not exist in this spreadsheet.`);
+    return;
+  }
+
+  // Pick month label
+  const monthResp = ui.prompt(
+    "Generate Thrive Report",
+    "Enter review month (e.g. March 2026):",
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (monthResp.getSelectedButton() !== ui.Button.OK) return;
+  const month = monthResp.getResponseText().trim();
+  if (!month) { ui.alert("No month entered."); return; }
+
+  generateReport(ss, paTab, month);
+}
+
+// ─────────────────────────────────────────────────────────────
+// MAIN GENERATOR
+// ─────────────────────────────────────────────────────────────
+function generateReport(ss, paTab, month) {
+  const ui     = SpreadsheetApp.getUi();
+  const sheet  = ss.getSheetByName(paTab);
+  const config = PA_CONFIG[paTab];
+  const data   = sheet.getDataRange().getValues();
+
+  // ── Find date columns (row 1, cols D onwards = index 3+) ──
+  const headerRow  = data[0];
+  const dateCols   = [];
+  for (let c = 3; c < headerRow.length; c++) {
+    if (headerRow[c] && headerRow[c] !== "") dateCols.push(c);
+  }
+  if (dateCols.length === 0) {
+    ui.alert("No date columns found in row 1. Check the sheet structure.");
+    return;
+  }
+
+  // ── Row 2 = overall % scores per date column ──────────────
+  const scoreRow = data[1]; // index 1 = row 2
+  const dateScores = dateCols.map(c => {
+    const v = scoreRow[c];
+    if (typeof v === "number") return v;
+    if (typeof v === "string") return parseFloat(v.replace("%","")) / 100 || 0;
+    return 0;
+  }).filter(v => v > 0); // ignore zero/empty dates
+
+  const overallAvg = dateScores.length
+    ? dateScores.reduce((a,b) => a+b, 0) / dateScores.length
+    : 0;
+
+  // ── Parse expectation rows ────────────────────────────────
+  // Each row: col A = name, col B = standard, dateCols = checkboxes
+  // We skip header/section-divider rows (where col A is bold section title)
+  const expectations = [];
+  let   currentSection = "General";
+
+  for (let r = 2; r < data.length; r++) {  // start row 3 (index 2)
+    const colA = (data[r][0] || "").toString().trim();
+    const colB = (data[r][1] || "").toString().trim();
+    if (!colA && !colB) continue;
+
+    // Detect section divider rows (col B or C has header text, no checkboxes)
+    const hasCheckboxes = dateCols.some(c =>
+      data[r][c] === true || data[r][c] === false
+    );
+
+    if (!hasCheckboxes) {
+      // It's a section header row
+      if (colA) currentSection = colA;
+      continue;
+    }
+
+    // It's an expectation row — count checked boxes
+    const checked = dateCols.filter(c => data[r][c] === true).length;
+    const total   = dateCols.filter(c =>
+      data[r][c] === true || data[r][c] === false
+    ).length;
+    const hitRate = total > 0 ? checked / total : 0;
+
+    expectations.push({
+      section : currentSection,
+      name    : colA,
+      standard: colB,
+      checked,
+      total,
+      hitRate,
+      met     : hitRate >= THRESH.MEETING,
+    });
+  }
+
+  // ── Group by section ──────────────────────────────────────
+  const sections = {};
+  for (const e of expectations) {
+    if (!sections[e.section]) sections[e.section] = [];
+    sections[e.section].push(e);
+  }
+
+  // ── Build narrative ───────────────────────────────────────
+  const narrative = buildNarrative(config, month, overallAvg, dateScores, sections, dateCols.length);
+
+  // ── Write output tab ──────────────────────────────────────
+  const outName = `${config.displayName} – ${month}`;
+  const existing = ss.getSheetByName(outName);
+  if (existing) ss.deleteSheet(existing);
+  const out = ss.insertSheet(outName);
+
+  out.setColumnWidth(1, 860);
+  out.getRange(1,1).setValue(`${config.displayName}  ·  ${config.role}  ·  ${month}`)
+    .setFontSize(11).setFontWeight("bold").setBackground("#232F3E").setFontColor("#FFFFFF")
+    .setHorizontalAlignment("center");
+  out.setRowHeight(1, 28);
+
+  out.getRange(2,1).setValue("↓ Click cell · Ctrl+A · Ctrl+C · paste to website")
+    .setFontSize(9).setFontStyle("italic")
+    .setBackground("#F5F5F5").setHorizontalAlignment("center");
+  out.setRowHeight(2, 22);
+
+  const textCell = out.getRange(3,1);
+  textCell.setValue(narrative)
+    .setFontFamily("Courier New").setFontSize(10)
+    .setVerticalAlignment("top").setWrap(true)
+    .setBackground("#FFFFFF")
+    .setBorder(true,true,true,true,false,false,"#CCCCCC",SpreadsheetApp.BorderStyle.SOLID);
+  out.setRowHeight(3, Math.max(500, narrative.split("\n").length * 17));
+
+  ss.setActiveSheet(out);
+  ui.alert(`✅ Report ready: "${outName}"\nClick the text cell, Ctrl+A, Ctrl+C, paste to your website.`);
+}
+
+// ─────────────────────────────────────────────────────────────
+// NARRATIVE BUILDER
+// ─────────────────────────────────────────────────────────────
+function buildNarrative(config, month, overallAvg, dateScores, sections, totalDates) {
+  const name      = config.displayName;
+  const firstName = name.split(" ")[0];
+  const role      = config.role;
+  const L         = [];
+  const add       = t  => L.push(t === undefined ? "" : t);
+  const br        = () => L.push("");
+  const div       = () => L.push("─".repeat(60));
+
+  // ── Header ────────────────────────────────────────────────
+  add(month);
+  add(name);
+  add(`Role: ${role}`);
+  add(`Dates evaluated: ${totalDates}  ·  Overall average: ${pct(overallAvg)}  ·  Overall rating: ${getRating(overallAvg)}`);
+  div(); br();
+
+  // ── One block per section ─────────────────────────────────
+  for (const [sectionName, items] of Object.entries(sections)) {
+    if (!items.length) continue;
+
+    const sectionAvg = items.reduce((s,e) => s + e.hitRate, 0) / items.length;
+    const rating     = getRating(sectionAvg);
+    const met        = items.filter(e => e.met);
+    const missed     = items.filter(e => !e.met);
+
+    add(sectionName.toUpperCase());
+    add(`OVERALL RATING: ${rating}  (${pct(sectionAvg)} of expectations met)`);
+    br();
+
+    if (met.length) {
+      add("Strengths:");
+      met.forEach(e => add(`    • ${e.name}  [${pct(e.hitRate)}]`));
+      br();
+    }
+
+    if (missed.length) {
+      add("Areas of Opportunity:");
+      missed.forEach(e => add(`    • ${e.name}  [${pct(e.hitRate)}]`));
+      br();
+    }
+
+    div(); br();
+  }
+
+  add(`Generated: ${new Date().toLocaleDateString()}`);
+  add(`${name}  ·  ${role}  ·  ${month}`);
+
+  return L.join("\n");
+}
+
+// ─────────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────────
+function getRating(score) {
+  if (score >= THRESH.EXCEEDING) return "EXCEEDING";
+  if (score >= THRESH.MEETING)   return "MEETING EXPECTATION";
+  if (score >= THRESH.PARTIAL)   return "PARTIALLY MEETING";
+  return "NOT MEETING";
+}
+
+function pct(val) {
+  return Math.round(val * 100) + "%";
+}

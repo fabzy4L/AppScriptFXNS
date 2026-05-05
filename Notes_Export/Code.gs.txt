@@ -1,0 +1,48 @@
+function doPost(e) {
+  const properties = PropertiesService.getScriptProperties();
+  const SECRET_TOKEN = properties.getProperty('NotesExportOpsBackupSecure77A'); 
+
+  try {
+    const data = JSON.parse(e.postData.contents);
+    
+    // Authentication Gatekeeper
+    if (data.auth_token !== SECRET_TOKEN) {
+      return ContentService.createTextOutput(JSON.stringify({"status": "error", "message": "Unauthorized Payload Dropped"}))
+                           .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // Parse notes - handle both array and newline-separated JSON strings
+    let notes;
+    if (Array.isArray(data.notes)) {
+      notes = data.notes;
+    } else if (typeof data.notes === 'string') {
+      notes = data.notes.split('\n').filter(s => s.trim()).map(s => JSON.parse(s));
+    } else {
+      notes = [data.notes];
+    }
+
+    const folderId = "1B7DcSzpAIPfnIf5pCRdIQBndrwznciUi";
+    const folder = DriveApp.getFolderById(folderId);
+    
+    // Process Payload
+    notes.forEach(note => {
+      const fileName = (note.title ? note.title.toString().replace(/[\/\\:*?"<>|]/g, '-') : "Untitled_" + Date.now()) + ".txt";
+      const content = note.body ? note.body.toString().replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim() : "";
+      
+      const existingFiles = folder.searchFiles('title = "' + fileName + '"');
+      if (existingFiles.hasNext()) {
+        const file = existingFiles.next();
+        file.setContent(content);
+      } else {
+        folder.createFile(fileName, content, MimeType.PLAIN_TEXT);
+      }
+    });
+    
+    return ContentService.createTextOutput(JSON.stringify({"status": "success", "processed": notes.length}))
+                         .setMimeType(ContentService.MimeType.JSON);
+                         
+  } catch (error) {
+    return ContentService.createTextOutput(JSON.stringify({"status": "error", "message": error.message}))
+                         .setMimeType(ContentService.MimeType.JSON);
+  }
+}

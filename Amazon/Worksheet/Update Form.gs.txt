@@ -1,0 +1,62 @@
+/** Run createOrUpdateForm() after adding scopes in the manifest. */
+const CONFIG = {
+  FORM_ID: '16EGE3KTPUehhmaxJKiZ1YecyEBT-cH6RiI8Nxshw060', // if you already have a Form, paste its ID to update it; else leave null to create new
+  RESP_SHEET_NAME: "Associate_Roundtable_Responses"
+};
+
+function createOrUpdateForm() {
+  const form = CONFIG.FORM_ID ? FormApp.openById(CONFIG.FORM_ID) : FormApp.create("Associate Roundtable – Weekly Pulse");
+
+  // Base settings
+  form.setDescription("Employment satisfaction and ops barriers.")
+      .setCollectEmail(false)
+      .setLimitOneResponsePerUser(false)
+      .setShowLinkToRespondAgain(true)
+      .setProgressBar(true)
+      .setShuffleQuestions(false)
+      .setConfirmationMessage("Thanks. Your input drives fixes and recognition.");
+
+  // Wipe existing items if updating
+  form.getItems().forEach(it => form.deleteItem(it));
+
+  // About You
+  form.addPageBreakItem().setTitle("About You");
+  form.addTextItem().setTitle("Name (optional)").setRequired(true);
+  form.addListItem()
+      .setTitle("Primary path today")
+      .setChoiceValues(["VRETS","Tranship","DCM","Waterspiders","Inductor","Palletizer","Ship Clerk","Problem Solve" ,"Directed Collector", ])
+      .setRequired(true);
+
+  // Satisfaction
+  form.addPageBreakItem().setTitle("Satisfaction").setHelpText("Rate your experience today.");
+  form.addScaleItem().setTitle("Overall satisfaction").setBounds(1, 5).setLabels("Low", "High").setRequired(true);
+  form.addScaleItem().setTitle("Do you feel supported by your leadership team?").setBounds(1, 5).setLabels("Poorly", "Extremely").setRequired(true);
+  form.addScaleItem().setTitle("Tooling / equipment availability").setBounds(1, 5).setLabels("Poor", "Excellent").setRequired(true);
+  form.addParagraphTextItem().setTitle("What improved your shift most today?");
+
+  // Barriers
+  form.addPageBreakItem().setTitle("Barriers").setHelpText("Identify blockers so we can remove them.");
+  form.addCheckboxItem()
+      .setTitle("Which barriers did you face?")
+      .setChoiceValues(["Missing carts/pallets","Late trailers","Scanner issues","Short staffing","Training gaps","Flow imbalance","Other"]);
+  form.addParagraphTextItem().setTitle("Describe the top blocker and its impact.");
+  form.addParagraphTextItem().setTitle("Your proposed fix (one actionable step).");
+
+  // Recognition & Ideas
+  form.addPageBreakItem().setTitle("Recognition & Ideas");
+  form.addTextItem().setTitle("Shout-out (who and why)");
+  form.addParagraphTextItem().setTitle("One idea to raise UPH without hurting safety.");
+  form.addParagraphTextItem().setTitle("One idea to increase safety awareness.");
+  form.addParagraphTextItem().setTitle("One idea to improve culture at work.");
+
+  // Response Sheet (create a new one each run unless the Form already has a destination)
+  const hasDest = !!form.getDestinationId();
+  if (!hasDest) {
+    const ss = SpreadsheetApp.create(CONFIG.RESP_SHEET_NAME);
+    form.setDestination(FormApp.DestinationType.SPREADSHEET, ss.getId());
+  }
+
+  Logger.log("Edit URL: " + form.getEditUrl());
+  Logger.log("Live URL: " + form.getPublishedUrl());
+}
+

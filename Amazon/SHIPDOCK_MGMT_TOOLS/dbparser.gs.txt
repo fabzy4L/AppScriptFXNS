@@ -1,0 +1,37 @@
+function archiveInputData() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const inputSheet = ss.getSheetByName("INPUT");
+  const rtbSheet = ss.getSheetByName("RTB_AUTOANALYSIS_BUILD3.0");
+  
+  // Get process path from A1 dropdown on RTB tab
+  const processPath = rtbSheet.getRange("A1").getValue();
+  const exportDate = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+
+  // Get INPUT data (skip header row)
+  const inputData = inputSheet.getDataRange().getValues();
+  const headers = inputData[0];
+  const rows = inputData.slice(1);
+
+  // Filter out rows where all key columns are empty (NA cleaner)
+  const cleanRows = rows.filter(row => 
+    row.some(cell => cell !== "" && cell !== null)
+  );
+
+  // Get or create ARCHIVE tab
+  let archiveSheet = ss.getSheetByName("ARCHIVE");
+  if (!archiveSheet) {
+    archiveSheet = ss.insertSheet("ARCHIVE");
+    // Write header once
+    const archiveHeaders = [...headers, "EXPORT_DATE", "PROCESS_PATH"];
+    archiveSheet.appendRow(archiveHeaders);
+  }
+
+  // Append each clean row with date + process stamps
+  cleanRows.forEach(row => {
+    archiveSheet.appendRow([...row, exportDate, processPath]);
+  });
+
+  SpreadsheetApp.getUi().alert(
+    `Archived ${cleanRows.length} rows for ${processPath} on ${exportDate}`
+  );
+}
