@@ -1,0 +1,22 @@
+# Google Apps Script Specifics
+# Ignore files containing raw secrets or tokens
+**/DISCORD_WEBHOOK.txt
+**/credentials.json
+**/client_secret.json
+
+# Local configuration files that might contain private IDs
+# (If you decide to move secrets to separate files later)
+**/*.local.gs
+**/*.secret.gs
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Gemini CLI / IDE Temporary files
+.gemini/
+.vscode/
+node_modules/
+dist/
+build/
+*.log
